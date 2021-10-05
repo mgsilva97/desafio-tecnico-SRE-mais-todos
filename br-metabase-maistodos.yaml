@@ -138,13 +138,34 @@ Resources:
         SourceSecurityGroupId: !Ref SecurityGroup
 
   Cluster:
-      Type: AWS::ECS::Cluster
-      Properties:
-        ClusterName: "metabase"
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: "metabase"
     
   MetabaseEfsFileSystem:
-      Type: AWS::EFS::FileSystem
-      Properties:
-        Encrypted: False
-        PerformanceMode: generalPurpose
-        ThroughputMode: bursting
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: False
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+
+  MetabaseSecurityGroupEFS:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the ECS tasks/containers that run on them
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        IpProtocol: tcp
+        FromPort: 2049
+        ToPort: 2049
+        SourceSecurityGroupId: !Ref MetabaseSecurityGroup
+
+  MetabaseEfsMounTarget:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref MetabaseEfsFileSystem
+      SecurityGroups:
+        - !Ref MetabaseSecurityGroupEFS
+      SubnetId: !Ref PrivateSubnet
+
+  
