@@ -17,10 +17,11 @@
 # Internet Route Table Association: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet-route-table-assoc.html
 # Security Groups: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html
 # ECS Cluster: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-cluster.html
+# ECS Task Definition: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-taskdefinition.html
+# ECS Service: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-service.html
 # EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
 # RDS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-rds-dbcluster.html
-
-
+# 
 
 Parameters:
   EnvironmentName:
@@ -42,6 +43,11 @@ Parameters:
   MasterUserPassword:
     Type: String
     Default: "90kYzZ6xy"
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
 
 Resources:
 # Networking
@@ -168,9 +174,9 @@ Resources:
             - Name: MB_DB_PORT
               Value: 5432
             - Name: MB_DB_USER
-              Value: postgres
+              Value: !Ref MasterUsername
             - Name: MB_DB_PASS
-              Value: RDHv1#y0ckRq
+              Value: !Ref MasterUserPassword
             - Name: MB_DB_HOST
               Value: !GetAtt DBCluster.Endpoint.Address
           PortMappings:
@@ -179,31 +185,39 @@ Resources:
           MountPoints:
             - ContainerPath: /metabase-data
               SourceVolume: metabase
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: br-estadio-metabase-logs
-              awslogs-region: us-east-1
-              awslogs-stream-prefix: metabase
       Cpu: 2048  # 256, 512, 1024, 2048 e 4096. 1024 ? igual a 1 vCPU
       ExecutionRoleArn: !Ref ExecutionRole
-      Family: !Sub ${AWS::StackName}-TaskDefinition
-      Memory: 8192
-      NetworkMode: awsvpc  # awsvpc | bridge | host | none
-      # PlacementConstraints:
-      #   - TaskDefinitionPlacementConstraint
-      RequiresCompatibilities: [EC2, FARGATE]
-      TaskRoleArn: !Ref TaskRole
+      Family: Metabase-TaskDefinition
+      Memory: 2048
+      NetworkMode: awsvpc
       Volumes:
         - Name: metabase
           EfsVolumeConfiguration:
-            # transitEncryptionPort:
             fileSystemId: !Ref MetabaseEfsFileSystem
-            # authorizationConfig:
-            #   iam: DISABLED
-              # accessPointId:
             transitEncryption: DISABLED
             rootDirectory: "/"
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS  # CODE_DEPLOY | ECS | EXTERNAL
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE  # EC2 | FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref PrivateSubnet
+          SecurityGroups:
+            - !Ref MetabaseSecurityGroup
+          AssignPublicIp: ENABLED
+      PlatformVersion: 1.4.0
+      SchedulingStrategy: REPLICA  # DAEMON | REPLICA # USAR COM CODEDEPLOY
+      ServiceName: metabase
+      TaskDefinition: !Ref TaskDefinition
     
   MetabaseEfsFileSystem:
     Type: AWS::EFS::FileSystem
