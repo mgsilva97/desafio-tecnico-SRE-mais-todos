@@ -325,4 +325,5 @@ Resources:
       Engine: aurora-postgresql
       PubliclyAccessible: false
 
-
+Outputs:
+  
