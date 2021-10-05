@@ -1,2 +1,10 @@
 # br-metabase-maistodos
 
+# TODO:
+# 1. Detalhar documentação AWS Cloudformation de cada recurso utilizado
+# 2. Usar ECS para montar o Cluster do Metabase
+# 3. Criar o Escalonamento do ECS via Cloudwatch de forma horizontal
+# 4. Subredes diferentes entre Metabase (Subrede Publica) e Database Redshift (Subrede Privada)
+# 5. Deverá ter um CI/CD e de forma automatizada para entrega do Metabase (Fazer numa stack a parte?)
+
+
