@@ -9,6 +9,24 @@
 # 6. Disponibilizar o link ao metabase
 # 7. Descrever quais foram os desafios encontrados no caminho e soluções
 
+# URLs de referencia:
+# VPC: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-vpc.html
+# Subnet: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html
+# 
+
+
+Parameters:
+  EnvironmentName:
+  Type: String
+  Default: "MaisTodos"
+
+  PublicSubnetCIDR:
+    Type: String
+    Default: 10.192.10.0/24
+  
+  PrivateSubnetCIDR:
+    Type: String
+    Default: 10.192.20.0/24
 
 
 Resources:
@@ -18,5 +36,33 @@ Resources:
       CidrBlock: !Ref VpcCIDR
       EnableDnsSupport: true
       EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref EnvironmentName
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Public Subnet
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: !Ref PrivateSubnetCIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} Private Subnet
+
   
+
+
   
