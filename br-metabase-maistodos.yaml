@@ -18,6 +18,7 @@
 # Security Groups: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html
 # ECS Cluster: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-cluster.html
 # EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
+# RDS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-rds-dbcluster.html
 
 
 
@@ -33,6 +34,14 @@ Parameters:
   PrivateSubnetCIDR:
     Type: String
     Default: 10.192.20.0/24
+  
+  MasterUsername:
+    Type: String
+    Default: "postgres"
+
+  MasterUserPassword:
+    Type: String
+    Default: "90kYzZ6xy"
 
 Resources:
 # Networking
@@ -141,6 +150,60 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: "metabase"
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: metabase
+          Image: metabase/metabase
+          Essential: true
+          Privileged: false
+          Environment:
+            # Variaveis essenciais para acesso ao metabase
+            - Name: MB_DB_TYPE
+              Value: postgres
+            - Name: MB_DB_DBNAME
+              Value: metabase
+            - Name: MB_DB_PORT
+              Value: 5432
+            - Name: MB_DB_USER
+              Value: postgres
+            - Name: MB_DB_PASS
+              Value: RDHv1#y0ckRq
+            - Name: MB_DB_HOST
+              Value: !GetAtt DBCluster.Endpoint.Address
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+          MountPoints:
+            - ContainerPath: /metabase-data
+              SourceVolume: metabase
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: br-estadio-metabase-logs
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: metabase
+      Cpu: 2048  # 256, 512, 1024, 2048 e 4096. 1024 ? igual a 1 vCPU
+      ExecutionRoleArn: !Ref ExecutionRole
+      Family: !Sub ${AWS::StackName}-TaskDefinition
+      Memory: 8192
+      NetworkMode: awsvpc  # awsvpc | bridge | host | none
+      # PlacementConstraints:
+      #   - TaskDefinitionPlacementConstraint
+      RequiresCompatibilities: [EC2, FARGATE]
+      TaskRoleArn: !Ref TaskRole
+      Volumes:
+        - Name: metabase
+          EfsVolumeConfiguration:
+            # transitEncryptionPort:
+            fileSystemId: !Ref MetabaseEfsFileSystem
+            # authorizationConfig:
+            #   iam: DISABLED
+              # accessPointId:
+            transitEncryption: DISABLED
+            rootDirectory: "/"
     
   MetabaseEfsFileSystem:
     Type: AWS::EFS::FileSystem
@@ -230,8 +293,8 @@ Resources:
       Engine: aurora-postgresql
       EngineMode: provisioned
       EngineVersion: 11.6
-      MasterUsername: postgres
-      MasterUserPassword: 90kYzZ6xy
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterUserPassword
       Port: 5432
       StorageEncrypted: true
       VpcSecurityGroupIds:
@@ -243,9 +306,9 @@ Resources:
       CACertificateIdentifier: rds-ca-2019
       CopyTagsToSnapshot: true
       DBClusterIdentifier: !Ref DBCluster
-      DBInstanceClass: db.t3.medium
+      DBInstanceClass: db.t3.small
       DBParameterGroupName: !Ref DBParameterGroup
       Engine: aurora-postgresql
       PubliclyAccessible: false
 
-  
+
