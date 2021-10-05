@@ -202,3 +202,50 @@ Resources:
         rds.restrict_password_commands: 1
         apg_ccm_enabled: 1
   
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      SubnetIds: !Ref PrivateSubnet
+
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: aurora-postgresql11
+      Parameters: {}
+
+  DBCluster:
+    Type: AWS::RDS::DBCluster
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AvailabilityZones: [us-east-1a, us-east-1b]
+      BackupRetentionPeriod: 30
+      DatabaseName: metabase
+      DBClusterParameterGroupName: !Ref DBClusterParameterGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      DeletionProtection: true
+      EnableCloudwatchLogsExports:
+        - postgresql
+      EnableIAMDatabaseAuthentication: true
+      Engine: aurora-postgresql
+      EngineMode: provisioned
+      EngineVersion: 11.6
+      MasterUsername: postgres
+      MasterUserPassword: 90kYzZ6xy
+      Port: 5432
+      StorageEncrypted: true
+      VpcSecurityGroupIds:
+        - !Ref DBSecurityGroup
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      CACertificateIdentifier: rds-ca-2019
+      CopyTagsToSnapshot: true
+      DBClusterIdentifier: !Ref DBCluster
+      DBInstanceClass: db.t3.medium
+      DBParameterGroupName: !Ref DBParameterGroup
+      Engine: aurora-postgresql
+      PubliclyAccessible: false
+
+  
