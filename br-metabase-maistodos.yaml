@@ -14,6 +14,10 @@
 # Subnet: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet.html
 # Route: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-route-table.html
 # Internet Gateway + Attachment: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-internetgateway.html
+# Internet Route Table Association: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-subnet-route-table-assoc.html
+# Security Groups: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group.html
+# ECS Cluster: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-cluster.html
+# EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
 
 
 
@@ -31,6 +35,7 @@ Parameters:
     Default: 10.192.20.0/24
 
 Resources:
+# Networking
   VPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -84,14 +89,62 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName} Public Routes
 
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
   DefaultPublicRoute:
     Type: AWS::EC2::Route
     Properties:
       RouteTableId: !Ref PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
-
   
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIpv6: ::/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIpv6: ::/0
+      VpcId: !Ref VPC
 
+# Cluster Metabase
+  MetabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Access to the ECS tasks/containers that run on them
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        IpProtocol: tcp
+        FromPort: 3000
+        ToPort: 3000
+        SourceSecurityGroupId: !Ref SecurityGroup
 
-  
+  Cluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: "metabase"
+    
+  MetabaseEfsFileSystem:
+      Type: AWS::EFS::FileSystem
+      Properties:
+        Encrypted: False
+        PerformanceMode: generalPurpose
+        ThroughputMode: bursting
