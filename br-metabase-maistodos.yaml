@@ -1,10 +1,10 @@
 # br-metabase-maistodos
 
 # TODO:
-# 1. Detalhar documentação AWS Cloudformation de cada recurso utilizado
-# 2. Usar ECS para montar o Cluster do Metabase
+# 1. Detalhar documentação AWS Cloudformation de cada recurso utilizado - OK
+# 2. Usar ECS para montar o Cluster do Metabase - OK
 # 3. Criar o Escalonamento do ECS via Cloudwatch de forma horizontal
-# 4. Subredes diferentes entre Metabase (Subrede Publica) e Database Redshift (Subrede Privada)
+# 4. Subredes diferentes entre Metabase (Subrede Publica) e Database (Subrede Privada) - OK
 # 5. Deverá ter um CI/CD e de forma automatizada para entrega do Metabase (Fazer numa stack a parte?)
 # 6. Disponibilizar o link ao metabase
 # 7. Descrever quais foram os desafios encontrados no caminho e soluções
@@ -21,7 +21,8 @@
 # ECS Service: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ecs-service.html
 # EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
 # RDS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-rds-dbcluster.html
-# 
+# Application Load Balancer: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-elasticloadbalancingv2-loadbalancer.html
+
 
 Parameters:
   EnvironmentName:
@@ -36,7 +37,7 @@ Parameters:
     Type: String
     Default: 10.192.10.0/24
   
-  PublicSubnet1:
+  PublicSubnetCIDR1:
     Type: String
     Default: 10.192.20.0/24
   
@@ -88,8 +89,8 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      CidrBlock: !Ref PublicSubnetCIDR
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      CidrBlock: !Ref PublicSubnetCIDR1
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -196,7 +197,8 @@ Resources:
     Properties:
       ContainerDefinitions:
         - Name: metabase
-          Image: metabase/metabase
+          # Image: metabase/metabase
+          Image: metabase:latest
           Essential: true
           Privileged: false
           Environment:
@@ -219,17 +221,28 @@ Resources:
           MountPoints:
             - ContainerPath: /metabase-data
               SourceVolume: metabase
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: br-metabase-maistodos-logs
+              awslogs-region: us-east-1
+              awslogs-stream-prefix: metabase
       Cpu: 2048  # 256, 512, 1024, 2048 e 4096. 1024 ? igual a 1 vCPU
       ExecutionRoleArn: !Ref ExecutionRole
-      Family: Metabase-TaskDefinition
-      Memory: 2048
+      Family: metabase-TaskDefinition
+      Memory: 8192
       NetworkMode: awsvpc
+      RequiresCompatibilities: [EC2, FARGATE]
       Volumes:
         - Name: metabase
-          EfsVolumeConfiguration:
+          EFSVolumeConfiguration:
             fileSystemId: !Ref MetabaseEfsFileSystem
-            transitEncryption: DISABLED
             rootDirectory: "/"
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: br-metabase-maistodos-logs
+      RetentionInDays: 2
 
   Service:
     Type: AWS::ECS::Service
@@ -243,15 +256,17 @@ Resources:
       DesiredCount: !Ref DesiredCount
       LaunchType: FARGATE  # EC2 | FARGATE
       LoadBalancers:
-        - ContainerName: metabase
+        - ContainerName: 'metabase'
           ContainerPort: 3000
           TargetGroupArn: !Ref TargetGroup
       NetworkConfiguration:
         AwsvpcConfiguration:
-          Subnets: !Ref PrivateSubnet
+          Subnets:
+            - !Ref PrivateSubnet
+            # - !Ref PrivateSubnet1
           SecurityGroups:
             - !Ref MetabaseSecurityGroup
-          AssignPublicIp: ENABLED
+          # AssignPublicIp: DISABLE
       PlatformVersion: 1.4.0
       SchedulingStrategy: REPLICA  # DAEMON | REPLICA # USAR COM CODEDEPLOY
       ServiceName: metabase
@@ -362,7 +377,6 @@ Resources:
       PubliclyAccessible: false
 
   # Load Balancer definitions
-
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -423,6 +437,11 @@ Resources:
       Actions:
         - Type: forward
           TargetGroupArn: !Ref TargetGroup
+      Conditions:
+        - Field: host-header
+          HostHeaderConfig:
+            Values: [!GetAtt LoadBalancer.DNSName]
+      
       ListenerArn: !Ref Listener80
       Priority: 1200
 
