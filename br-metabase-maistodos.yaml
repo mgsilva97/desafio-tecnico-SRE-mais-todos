@@ -6,8 +6,9 @@
 # 3. Criar o Escalonamento do ECS via Cloudwatch de forma horizontal
 # 4. Subredes diferentes entre Metabase (Subrede Publica) e Database (Subrede Privada) - OK
 # 5. Deverá ter um CI/CD e de forma automatizada para entrega do Metabase (Fazer numa stack a parte?)
-# 6. Disponibilizar o link ao metabase
-# 7. Descrever quais foram os desafios encontrados no caminho e soluções
+# 6. Disponibilizar o link ao metabase - Está no output o acesso do load balancer - OK
+# 7. Descrever quais foram os desafios encontrados no caminho e soluções - OK
+# 8. Ver Resource TaskRole se ha necessidade de tudo aquilo nas permissoes
 
 # URLs de referencia:
 # VPC: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-vpc.html
@@ -22,7 +23,15 @@
 # EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
 # RDS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-rds-dbcluster.html
 # Application Load Balancer: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-elasticloadbalancingv2-loadbalancer.html
+# 
 
+
+# Dificuldades:
+# - Tentando subir o Service do ECS com muito custo, ele fica travado o CloudFront não te diz onde está o erro.
+# - Avalability Zones indisponiveis na hora de subir o DBInstance.
+# - Erro descoberto, nao está conseguindo baixar a imagem do metabase. Service precisa estar numa subnet publica e o campo "AssignPublicIp" deve estar ENABLED ao usar o ECS/Fargate
+# - Referencia ao problema acima: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-configure-network.html
+# 
 
 Parameters:
   EnvironmentName:
@@ -192,13 +201,46 @@ Resources:
     Properties:
       ClusterName: "metabase"
 
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Sid: ""
+            Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - ecs-tasks.amazonaws.com
+      Policies:
+        - PolicyName: Secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - secretsmanager:GetSecretValue
+                  - ssm:GetParameters
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key:*
+                  - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
+
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: br-metabase-maistodos-logs
+      RetentionInDays: 180
+
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
       ContainerDefinitions:
         - Name: metabase
-          # Image: metabase/metabase
-          Image: metabase:latest
+          Image: metabase/metabase
           Essential: true
           Privileged: false
           Environment:
@@ -233,19 +275,18 @@ Resources:
       Memory: 8192
       NetworkMode: awsvpc
       RequiresCompatibilities: [EC2, FARGATE]
+      TaskRoleArn: !Ref TaskRole
       Volumes:
         - Name: metabase
           EFSVolumeConfiguration:
-            fileSystemId: !Ref MetabaseEfsFileSystem
-            rootDirectory: "/"
-  LogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: br-metabase-maistodos-logs
-      RetentionInDays: 2
-
+            FilesystemId: !Ref MetabaseEfsFileSystem
+            RootDirectory: "/"
   Service:
     Type: AWS::ECS::Service
+    DependsOn:
+      - Listener80
+      - ListenerRule
+      - DBInstance
     Properties:
       Cluster: !Ref Cluster
       DeploymentConfiguration:
@@ -262,11 +303,12 @@ Resources:
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets:
-            - !Ref PrivateSubnet
-            # - !Ref PrivateSubnet1
+            - !Ref PublicSubnet
           SecurityGroups:
+            - !Ref MetabaseSecurityGroupEFS
             - !Ref MetabaseSecurityGroup
-          # AssignPublicIp: DISABLE
+            - !Ref SecurityGroup
+          AssignPublicIp: ENABLED
       PlatformVersion: 1.4.0
       SchedulingStrategy: REPLICA  # DAEMON | REPLICA # USAR COM CODEDEPLOY
       ServiceName: metabase
@@ -296,7 +338,7 @@ Resources:
       FileSystemId: !Ref MetabaseEfsFileSystem
       SecurityGroups:
         - !Ref MetabaseSecurityGroupEFS
-      SubnetId: !Ref PrivateSubnet
+      SubnetId: !Ref PublicSubnet
 
   ExecutionRole:
     Type: AWS::IAM::Role
