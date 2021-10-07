@@ -8,7 +8,7 @@
 # 5. Deverá ter um CI/CD e de forma automatizada para entrega do Metabase (Fazer numa stack a parte?)
 # 6. Disponibilizar o link ao metabase - Está no output o acesso do load balancer - OK
 # 7. Descrever quais foram os desafios encontrados no caminho e soluções - OK
-# 8. Ver Resource TaskRole se ha necessidade de tudo aquilo nas permissoes
+# 8. Ver Resource TaskRole se ha necessidade de tudo aquilo nas permissoes - Sim, é necessário para execução correta do metabase
 
 # URLs de referencia:
 # VPC: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-ec2-vpc.html
@@ -68,7 +68,7 @@ Parameters:
 
   DesiredCount:
     Type: Number
-    Default: 1
+    Default: 2
     MinValue: 0
 
 Resources:
@@ -184,6 +184,13 @@ Resources:
           CidrIpv6: ::/0
       VpcId: !Ref VPC
 
+# Log group para fazer troubleshooting
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: br-metabase-maistodos-logs
+      RetentionInDays: 180
+
 # Cluster Metabase
   MetabaseSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -227,13 +234,20 @@ Resources:
                 Resource:
                   - !Sub arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key:*
                   - !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:*
-
-
-  LogGroup:
-    Type: AWS::Logs::LogGroup
+  ExecutionRole:
+    Type: AWS::IAM::Role
     Properties:
-      LogGroupName: br-metabase-maistodos-logs
-      RetentionInDays: 180
+      AssumeRolePolicyDocument:
+        Version: "2008-10-17"
+        Statement:
+          - Sid: ""
+            Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Path: /
 
   TaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -313,7 +327,8 @@ Resources:
       SchedulingStrategy: REPLICA  # DAEMON | REPLICA # USAR COM CODEDEPLOY
       ServiceName: metabase
       TaskDefinition: !Ref TaskDefinition
-    
+
+ # EFS
   MetabaseEfsFileSystem:
     Type: AWS::EFS::FileSystem
     Properties:
@@ -340,21 +355,8 @@ Resources:
         - !Ref MetabaseSecurityGroupEFS
       SubnetId: !Ref PublicSubnet
 
-  ExecutionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2008-10-17"
-        Statement:
-          - Sid: ""
-            Effect: Allow
-            Action: sts:AssumeRole
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-      Path: /
 
+# Database
   DBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -418,7 +420,7 @@ Resources:
       Engine: aurora-postgresql
       PubliclyAccessible: false
 
-  # Load Balancer definitions
+# Load Balancer definitions
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -487,6 +489,79 @@ Resources:
       ListenerArn: !Ref Listener80
       Priority: 1200
 
+# ECS Autoscaling
+  ScalableTarget:
+      Type: AWS::ApplicationAutoScaling::ScalableTarget
+      Properties:
+        RoleARN: !GetAtt AutoScalingRole.Arn
+        ResourceId: !Join [ '/', ["service", !Ref Cluster, !GetAtt Service.Name]]
+        ServiceNamespace: ecs
+        ScalableDimension: ecs:service:DesiredCount
+        MinCapacity: 2
+        MaxCapacity: 10
+
+  ScalingUpPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: step-auto-scaling-policy-up
+      PolicyType: StepScaling
+      ScalingTargetId: !Ref ScalableTarget
+      StepScalingPolicyConfiguration:
+        AdjustmentType: PercentChangeInCapacity
+        Cooldown: 120
+        MetricAggregationType: Maximum
+        MinAdjustmentMagnitude: 2
+        StepAdjustments:
+        - MetricIntervalLowerBound: 0
+          MetricIntervalUpperBound: 1000
+          ScalingAdjustment: 20
+        - MetricIntervalLowerBound: 1000
+          MetricIntervalUpperBound: 3000
+          ScalingAdjustment: 50
+        - MetricIntervalLowerBound: 3000
+          ScalingAdjustment: 100
+
+  AlarmUp:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'LoadBalancer está com muitos acessos. Será necessário escalar'
+      Namespace: 'AWS/ApplicationELB'
+      Dimensions:
+      - Name: LoadBalancer
+        Value: !GetAtt LoadBalancer.LoadBalancerFullName
+      MetricName: RequestCount
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1000
+      AlarmActions:
+      - !Ref ScalingUpPolicy
+
+  AutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: service-auto-scaling-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [application-autoscaling.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Policies:
+        - PolicyName: service-auto-scaling-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                  - ecs:UpdateService
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DeleteAlarms
+                Resource:
+                  - "*"
 Outputs:
   LoadBalancerDNSName:
     Value: !GetAtt LoadBalancer.DNSName
