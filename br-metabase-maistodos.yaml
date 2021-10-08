@@ -3,7 +3,7 @@
 # TODO:
 # 1. Detalhar documentação AWS Cloudformation de cada recurso utilizado - OK
 # 2. Usar ECS para montar o Cluster do Metabase - OK
-# 3. Criar o Escalonamento do ECS via Cloudwatch de forma horizontal
+# 3. Criar o Escalonamento do ECS via Cloudwatch de forma horizontal - OK
 # 4. Subredes diferentes entre Metabase (Subrede Publica) e Database (Subrede Privada) - OK
 # 5. Deverá ter um CI/CD e de forma automatizada para entrega do Metabase (Fazer numa stack a parte?)
 # 6. Disponibilizar o link ao metabase - Está no output o acesso do load balancer - OK
@@ -23,15 +23,19 @@
 # EFS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-efs-filesystem.html
 # RDS: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-rds-dbcluster.html
 # Application Load Balancer: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-resource-elasticloadbalancingv2-loadbalancer.html
+# ECS Autoscaling: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-applicationautoscaling-scalabletarget.html
+# Cloudwatch: https://docs.aws.amazon.com/pt_br/AWSCloudFormation/latest/UserGuide/aws-properties-cw-alarm.html
 # 
 
 
 # Dificuldades:
-# - Tentando subir o Service do ECS com muito custo, ele fica travado o CloudFront não te diz onde está o erro.
-# - Avalability Zones indisponiveis na hora de subir o DBInstance.
+# - Tentando subir o Service do ECS com muito custo, ele fica travado e o CloudFormation não te diz onde está o erro.
+# - Avalability Zones indisponiveis na hora de subir o DBInstance em mais de um momento.
+# - Muita demora pra subir o DB Instance e o Service do ECS.
 # - Erro descoberto, nao está conseguindo baixar a imagem do metabase. Service precisa estar numa subnet publica e o campo "AssignPublicIp" deve estar ENABLED ao usar o ECS/Fargate
 # - Referencia ao problema acima: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-configure-network.html
-# 
+
+# INFO: Teste do autoscaling no loadbalancer (Linux Terminal)--> # hey -n 5000 http://LOAD-BALANCER-URL
 
 Parameters:
   EnvironmentName:
@@ -64,12 +68,16 @@ Parameters:
 
   MasterUserPassword:
     Type: String
-    Default: "90kYzZ6xy"
+    Default: "90kYzZ6xy" # Valor default apenas para subida do yaml. Após testes, remover a senha e definir na console.
 
   DesiredCount:
     Type: Number
     Default: 2
     MinValue: 0
+
+  ClusterName:
+    Type: String
+    Default: "metabase"
 
 Resources:
 # Networking
@@ -153,6 +161,12 @@ Resources:
     Properties:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet
+  
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
 
   DefaultPublicRoute:
     Type: AWS::EC2::Route
@@ -206,7 +220,7 @@ Resources:
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: "metabase"
+      ClusterName: !Ref ClusterName
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -283,7 +297,7 @@ Resources:
               awslogs-group: br-metabase-maistodos-logs
               awslogs-region: us-east-1
               awslogs-stream-prefix: metabase
-      Cpu: 2048  # 256, 512, 1024, 2048 e 4096. 1024 ? igual a 1 vCPU
+      Cpu: 2048
       ExecutionRoleArn: !Ref ExecutionRole
       Family: metabase-TaskDefinition
       Memory: 8192
@@ -295,6 +309,7 @@ Resources:
           EFSVolumeConfiguration:
             FilesystemId: !Ref MetabaseEfsFileSystem
             RootDirectory: "/"
+      Tags: "CodeDeploy"
   Service:
     Type: AWS::ECS::Service
     DependsOn:
@@ -307,9 +322,9 @@ Resources:
         MaximumPercent: 200
         MinimumHealthyPercent: 100
       DeploymentController:
-        Type: ECS  # CODE_DEPLOY | ECS | EXTERNAL
+        Type: ECS
       DesiredCount: !Ref DesiredCount
-      LaunchType: FARGATE  # EC2 | FARGATE
+      LaunchType: FARGATE
       LoadBalancers:
         - ContainerName: 'metabase'
           ContainerPort: 3000
@@ -324,7 +339,7 @@ Resources:
             - !Ref SecurityGroup
           AssignPublicIp: ENABLED
       PlatformVersion: 1.4.0
-      SchedulingStrategy: REPLICA  # DAEMON | REPLICA # USAR COM CODEDEPLOY
+      SchedulingStrategy: REPLICA
       ServiceName: metabase
       TaskDefinition: !Ref TaskDefinition
 
